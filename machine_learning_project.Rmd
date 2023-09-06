@@ -1,0 +1,461 @@
+---
+title: "Machine Learning Project"
+---
+
+
+**Your Name**: Ubaid ullah Tariq
+
+
+
+
+```{r warning = FALSE, message = FALSE}
+# Suppress dplyr summarise grouping warning messages
+options(dplyr.summarise.inform = FALSE)
+
+## Add R libraries here
+library(tidyverse)
+library(tidymodels)
+library(dplyr)
+library(parsnip)
+library(vip)
+library(discrim)
+library(klaR)
+library(rpart.plot)
+library(ranger)
+
+# Load the dataset
+telecom_df <- read_rds(url('https://gmubusinessanalytics.netlify.app/data/telecom_df.rds'))
+summary(telecom_df)
+```
+
+
+
+# Data Analysis
+
+In this section, you must think of at least 5 relevant questions that explore the relationship between `canceled_service` and the other variables in the `telecom_df` data set. The goal of your analysis should be discovering which variables drive the differences between customers who do and do not cancel their service.
+
+You must answer each question and provide supporting data summaries with either a summary data frame (using `dplyr`/`tidyr`) or a plot (using `ggplot`) or both.
+
+In total, you must have a minimum of 3 plots (created with `ggplot`) and 3 summary data frames (created with `dplyr`) for the exploratory data analysis section. Among the plots you produce, you must have at least 3 different types (ex. box plot, bar chart, histogram, scatter plot, etc...)
+
+See the [Data Analysis Project](https://gmubusinessanalytics.netlify.app/data-analysis-project.html) for an example of a question answered with a summary table and plot.
+
+**Note**: To add an R code chunk to any section of your project, you can use the keyboard shortcut `Ctrl` + `Alt` + `i` or the `insert` button at the top of your R project template notebook file.
+
+
+
+# Question 1
+
+**Question**:
+What are the contributing factors behind customer service cancellation?
+
+**Answer**:
+In order to respond to the question, two data frames and a bar graph were produced. Average monthly service charges for the client didn't seem to have much of an impact on the customer's choice to keep the account. The owners of fiber optic services went against the typical tendency that customers who paid lower monthly fees were more likely to close their accounts. However, it appeared that the customer's choice was influenced by the service type. The users of digital services had the greatest turnover rate.
+
+```{r}
+#Count Cancelled Service
+Summary_1 <- telecom_df %>% filter(internet_service == "digital",canceled_service == "yes") %>% count()
+view(Summary_1)
+Summary_2 <- telecom_df %>% filter(internet_service == "fiber_optic",customer_status == "yes") %>% count()
+view(Summary_2)
+
+#Count Active Service
+Summary_active_1 <- telecom_df %>% filter(internet_service == "digital",canceled_service == "no") %>% count()
+view(Summary_active_1)
+Summary_active_2 <- telecom_df %>% filter(internet_service == "fiber_optic",customer_status == "no") %>% count()
+view(Summary_active_2)
+
+counts <- data.frame(Summary_active_1,Summary_1, Summary_active_2, Summary_2)
+
+colnames(counts) <- c("Number of Active Service (Digital)","Number of Cancelled Service (Digital)","Number of Active Service (Fiber Optic)","Number of Cancelled Service (Fiber Optic)")
+
+view(counts)
+  
+monthly_charges_active_digital <- telecom_df %>% filter(internet_service == "digital",canceled_service == "no") %>% summarize(mean(monthly_charges))
+monthly_charges_cancelled_digital <- telecom_df %>% filter(internet_service == "digital",canceled_service == "yes") %>% summarize(mean(monthly_charges))
+
+monthly_charges_active_fiberoptic <- telecom_df %>% filter(internet_service == "fiber_optic",canceled_service == "no") %>% summarize(mean(monthly_charges))
+monthly_charges_cancelled_fiberoptic <- telecom_df %>% filter(internet_service == "fiber_optic",canceled_service == "yes") %>% summarize(mean(monthly_charges))
+
+
+df0 <- data.frame(monthly_charges_active_digital, monthly_charges_cancelled_digital , monthly_charges_active_fiberoptic , amonthly_charges_cancelled_fiberoptic)
+
+colnames(df0) <- c("Monthly charges for active digital service","Monthly charges for cancelled digital service", "Monthly charges for active fiber optic service","Monthly charges for cancelled fiber optic service")
+view(df0)
+
+center_title <- theme(plot.title=element_text(hjust=0.5))
+
+A <- ggplot(data=telecom_df,aes(x= canceled_service, y = monthly_charges,fill=internet_service))  +geom_bar(show.legend = FALSE, stat="summary",position = "dodge", fun = "mean") + facet_grid( ~internet_service)  +xlab("Customer Service Status") +ylab("Monthly Charges") +ggtitle("The impact of Customer monthly charges and internet service Type on \n Account retention") + center_title
+plot(A)
+
+  
+
+```
+
+
+
+# Question 2
+
+**Question**:
+Is it possible to foresee a customer's service cancellation? If so, how accurate are the forecasts?
+
+**Answer**:
+The graph and data frame make it very evident that the more favorable the terms of their contract with the company, the more likely it was that they would decide to maintain their accounts. For the consumers that decided to maintain their accounts, the choice was entirely determined by the type of contract. The percentage is significantly larger for those clients who have been interacting with the company for a long time.
+
+```{r}
+bad_customers <- telecom_df %>% filter(canceled_service == "yes")
+
+summary(bad_customers)
+
+active_customers <- telecom_df %>% filter(canceled_service == "no") %>% summarize(mean(months_with_company))
+view(active_customers)
+
+inactive_customers <- telecom_df %>% filter(canceled_service == "yes") %>% summarize(mean(months_with_company))
+view(inactive_customers)
+
+df1 <- data.frame(active_customers,inactive_customers)
+colnames(df1) <- c("Active Customers months with company (Avg)","Inactive Customers months with company (Avg)")
+view(df1)
+
+B <- ggplot(data=telecom_df,aes(x= canceled_servive, y = contract))  +geom_bar(show.legend = FALSE, stat="summary",position = "dodge", fun = "mean") +xlab("Customer Service Status") +ylab("Average months with the company") +ggtitle("The impact of Customer contract on \n Account retention") + center_title
+plot(B)
+
+
+
+```
+
+
+# Question 3
+
+**Question**:
+How many costly mistakes (clients categorized as not canceling but later do) is the model anticipated to produce?
+
+**Answer**:
+According to the box plot and the supporting data set, there is a greater likelihood that consumers will terminate their accounts the higher the monthly charges for the service. While the average monthly charges were lower for clients who chose to keep their accounts.
+
+```{r}
+monthly_charges_active <- telecom_df %>% filter(canceled_service == "no") %>% summarize(mean(monthly_charges))
+view(monthly_charges_active)
+
+monthly_charges_inactive <- telecom_df %>% filter(canceled_service == "yes") %>% summarize(mean(monthly_charges))
+view(monthly_charges_inactive)
+
+df2 <- data.frame(monthly_charges_active, monthly_charges_inactive)
+colnames(df2) <- c("Active Service based on monthly charges","Inactive Service based on monthly charges")
+view(df2)
+
+C <- ggplot(data=telecom_df,aes(x= canceled_service, y = monthly_charges))  +geom_boxplot(show.legend = FALSE) +xlab("Customer Service Active") +ylab("Based on monthly charges") +ggtitle("The impact of services monthly charges on \n Account retention") + center_title
+plot(C)
+
+
+
+```
+
+
+
+# Question 4
+
+**Question**:
+Is there anything the company can do to lessen the possibility of service cancellation?
+
+**Answer**:
+The data frame and the violin plot show that the likelihood that the client will keep the services goes with the length of the contract.
+
+```{r}
+based_on_contract_active <- telecom_df %>% filter(canceled_service == "no") %>% summarize(mean(contract))
+view(based_on_contract_active)
+
+based_on_contract_inactive <- telecom_df %>% filter(canceled_service == "yes") %>% summarize(mean(contract))
+view(based_on_contract_inactive)
+
+df3 <- data.frame(based_on_contract_active, based_on_contract_inactive)
+colnames(df3) <- c("Active service based on contract","Inactive service based on contract")
+view(df3)
+
+D <- ggplot(data=telecom_df,aes(x= canceled_service, y = contract,fill=canceled_service))  +geom_violin(show.legend = FALSE) +xlab("Customer Service Status") +ylab("Contract") +ggtitle("The impact of contract tenure on \n the Account retention") + center_title
+plot(D)
+
+
+```
+
+
+
+# Question 5
+
+**Question**:
+How does a customer's interaction with technical support affect their choice between continuing with the services or closing their account?
+
+**Answer**:
+The data frame and graph demonstrate how the technical support outreach affects the customer's choice of whether or not to continue using the services. The findings appear paradoxical since they show a pattern whereby the likelihood that a client would terminate their account increased with the frequency with which they were contacted by the technical support team.  
+
+```{r}
+tech_support_active <- telecom_df %>% filter(canceled_service == "no") %>% summarize(mean(tech_support))
+view(tech_support_active)
+
+tech_support_inactive <- telecom_df %>% filter(canceled_service == "yes") %>% summarize(mean(tech_support))
+view(tech_support_inactive)
+
+df4 <- data.frame(tech_support_active, tech_support_inactive)
+
+df4 <- data.frame(based_on_contract_active, based_on_contract_inactive)
+colnames(df4) <- c("Number of times reached by technical support for Active services (Average)","Number of times reached by technical support for canceled services (Average)")
+view(df4)
+
+E <- ggplot(data=telecom_df,aes(x= canceled_service, y =tech_support))  +geom_bar(show.legend = FALSE, stat="summary",position = "dodge", fun = "mean") +xlab("Customer Service Status") +ylab("Number of times reached out by technical support (Avg)") +ggtitle("The impact of technical support on \n the Account retention") + center_title
+plot(E)
+
+
+
+```
+
+
+
+
+# Machine Learning
+
+
+In this section of the project, you will fit **three classification algorithms** to predict the response variable,`canceled_service`. You should use all of the other variables in the `telecom_df` data as predictor variables for each model.
+
+You must follow the machine learning steps below. 
+
+The data splitting and feature engineering steps should only be done once so that your models are using the same data and feature engineering steps for training.
+
+- Split the `telecom_df` data into a training and test set (remember to set your seed)
+- Specify a feature engineering pipeline with the `recipes` package
+    - You can include steps such as skewness transformation, dummy variable encoding or any other steps you find appropriate
+- Specify a `parsnip` model object
+    - You may choose from the following classification algorithms:
+      - Logistic Regression
+      - LDA
+      - QDA
+      - KNN
+      - Decision Tree
+      - Random Forest
+- Package your recipe and model into a workflow
+- Fit your workflow to the training data
+    - If your model has hyperparameters:
+      - Split the training data into 5 folds for 5-fold cross validation using `vfold_cv` (remember to set your seed)
+      - Perform hyperparamter tuning with a random grid search using the `grid_random()` function
+      - Refer to the following tutorial for an example - [Random Grid Search](https://gmubusinessanalytics.netlify.app/lesson-08-r-tutorial.html#Hyperparameter_Tuning14){target="_blank"}
+      - Hyperparameter tuning can take a significant amount of computing time. Be careful not to set the `size` argument of `grid_random()` too large. I recommend `size` = 10 or smaller.
+      - Select the best model with `select_best()` and finalize your workflow
+- Evaluate model performance on the test set by plotting an ROC curve using `autoplot()` and calculating the area under the ROC curve on your test data
+
+
+
+
+
+# Model 1
+
+```{r}
+# Logistic Classification Model
+set.seed(500)
+
+service_split <- initial_split(telecom_df, prop = 0.75, 
+                                strata = canceled_service)
+
+service_split
+
+service_training <- service_split %>% training()
+service_training
+
+service_testing <- service_split %>% testing()
+service_testing
+
+service_recipe <- recipe(canceled_service ~ .,
+                          data = service_training)
+summary(service_recipe)
+
+service_transformations <- recipe(canceled_service ~ tech_support + contract + senior_citizen + spouse_partner + dependents + cellular_service + avg_call_min + avg_intl_min + internet_service + payment_method + months_with_company, data = service_training)  %>% 
+                            # Transformation steps
+  step_corr(all_numeric(), -all_outcomes(), threshold = 0.75) %>%
+                            step_YeoJohnson(all_numeric(), -all_outcomes()) %>%
+                            step_normalize(all_numeric(), -all_outcomes()) %>% 
+                            step_dummy(all_nominal(), -all_outcomes()) %>% 
+                            
+                            prep(training = service_training)
+
+#service_testing
+service_transformations %>% 
+  bake(new_data = service_testing)
+
+logistic_model <- logistic_reg() %>% 
+                  set_engine('glm') %>% 
+                  set_mode('classification')
+service_wf <- workflow() %>% 
+            add_model(logistic_model) %>% 
+            add_recipe(service_recipe)
+
+service_logistic_fit <- service_wf %>% 
+                      fit(data = service_training)
+
+service_trained_model <- service_logistic_fit %>% 
+                       pull_workflow_fit()
+
+vip(service_trained_model)
+
+my_metrics <- metric_set(accuracy,sens,spec,f_meas,roc_auc)
+
+last_fit_model <- service_wf %>% 
+                  last_fit(split = service_split,
+                           metrics = my_metrics)
+last_fit_model %>% 
+  collect_metrics()
+
+last_fit_results <- last_fit_model %>% 
+                     collect_predictions()
+
+last_fit_results
+
+last_fit_results %>% roc_curve(truth = canceled_service, estimate = .pred_closed_service) %>%autoplot()
+conf_mat(last_fit_results, truth = canceled_service , estimate = .pred_class)
+
+
+```
+
+
+
+
+
+# Model 2
+
+```{r}
+#Quadratic Discriminant Model
+set.seed(500)
+qda_model <- discrim_regularized(frac_common_cov = 0) %>% 
+             set_engine('klaR') %>% 
+             set_mode('classification')
+
+qda_wf <- workflow() %>% 
+          add_model(qda_model) %>% 
+          add_recipe(service_transformations)
+
+last_fit_qda <- qda_wf %>% 
+                last_fit(split = service_split)
+
+last_fit_qda %>% collect_metrics()
+
+qda_predictions <- last_fit_qda %>% 
+                     collect_predictions()
+
+qda_predictions
+
+qda_predictions %>% 
+roc_curve(truth = canceled_service, .pred_closed_service) %>% 
+autoplot()
+
+f_meas(qda_predictions, truth = canceled_service, estimate = .pred_class)
+
+conf_mat(qda_predictions, truth = canceled_service, estimate = .pred_class)
+
+
+
+
+
+```
+
+
+
+
+
+# Model 3
+
+```{r}
+#Random Forest
+set.seed(500)
+
+rf_model <- rand_forest(mtry = tune(),
+                        trees = tune(),
+                        min_n = tune()) %>% 
+            set_engine('ranger', importance = "impurity") %>% 
+            set_mode('classification')
+rf_workflow <- workflow() %>% 
+               add_model(rf_model) %>% 
+               add_recipe(service_transformations)
+
+service_folds <- vfold_cv(service_training, v = 5)
+
+set.seed(500)
+
+rf_grid <- grid_random(mtry() %>% range_set(c(3, 7)),
+                       trees(),
+                       min_n(),
+                       size = 7)
+
+rf_grid
+
+
+
+#Tuning random forest workflow
+rf_tuning <- rf_workflow %>% 
+             tune_grid(resamples = service_folds,
+                       grid = rf_grid)
+
+rf_tuning %>% show_best('roc_auc')
+
+best_rf <- rf_tuning %>% 
+           select_best(metric = 'roc_auc')
+
+
+#View the best parameters
+best_rf
+
+final_rf_workflow <- rf_workflow %>% 
+                     finalize_workflow(best_rf)
+
+rf_wf_fit <- final_rf_workflow %>% 
+             fit(data = service_training)
+
+rf_fit <- rf_wf_fit %>% 
+          pull_workflow_fit()
+
+vip(rf_fit)
+
+rf_last_fit <- final_rf_workflow %>% 
+               last_fit(service_split)
+
+rf_last_fit %>% collect_metrics()
+
+rf_last_fit %>% collect_predictions() %>% 
+                roc_curve(truth  = canceled_service, estimate = .pred_closed_service) %>% 
+                autoplot()
+
+rf_predictions <- rf_last_fit %>% collect_predictions()
+
+conf_mat(rf_predictions, truth = canceled_service, estimate = .pred_class)
+
+
+
+
+```
+
+
+
+
+**Summary**
+
+Introduction:
+
+The project's objective was to do an explanatory followed by a predictive data analysis on a dataset of telecom service accounts of a significant U.S. telecommunications provider in order to identify the factors impacting consumers' decision to discontinue their services. The second component of the project challenged students to use machine learning algorithms to create predictions based on data to ascertain if a client may discontinue their services in the future. A record number of clients have canceled their contracts with the company, which has resulted in a sharp drop in income. To increase income, the corporation is committed to keeping as many clients as possible on various services. A thorough understanding of the factors influencing client decisions would tremendously assist the business in streamlining its processes and offering tailored incentives to the consumers, both of which might prove to be quite valuable to the business. To enhance the usefulness of the insights gained, a series of five questions was created and the answers provided.
+
+
+Key Findings:
+
+While studying the data set, several intriguing discoveries were uncovered. The average contract duration of the client seems to have very little impact on the customer's choice to keep the account. The holders of fiber optic services generally broke the tendency that customers who were at the lower end of the company's monthly client spectrum were more likely to close their accounts. However, it appeared that the customer's choice was influenced by the service type. The users of digital services had the greatest turnover rate. The best user retention was shown by digital service providers.This information can assist the business in developing tactics to attract a client base that has a high possibility of continuing to use the company's services. Similarly, the statistics showed that the likelihood that a consumer would keep an account increased with account usage. Knowing this, the business might attempt to entice and urge its customers to spend more money utilizing the services, which might lead to an increase in sales for the business. This information could persuade the business to focus its mass advertising activities on increasing the customer ratio, which might then have a beneficial effect on the customer retention rate.It was shown that the likelihood that a client will terminate their account increased with the frequency with which they were contacted by the tech support personnel. This discovery can prompt the business to reconsider its consumer outreach initiatives and put into place changes that would not bother its clients.
+
+
+Best classification model:
+
+The provided data set was subjected to three classification models. The Random Forest model's significance scores were used to identify a set of 10 highly significant predictor variables. The mtry() hyper parameter was used to base the significance ratings on the predictor variables with the highest predictive power that were selected at random. The parsnip recipe function, which is a step in the feature engineering process, was then supplied these predictor variables. To provide fair comparisons, the identical seed and feature engineering procedures were used to all three models. We ran Logistic Regression, Quadratic Discriminant Analysis, and Random Forest to see which model performed the best on our data set.The Roc auc and Confusion Matrix performance metrics showed that Random Forest performed the best. The confusion matrix showed that identical findings were mistakenly categorized. This statistic is crucial to the analysis goal since it represents the consumers whose account closures were anticipated by the model to be unlikely but which actually occurred.
+
+
+Recommendations:
+
+The users of digital services had the greatest turnover rate. The best user retention was shown by fiber optic service providers. The business have to make an effort to persuade clients who meet the requirements for the fiber optic service to sign up with them. As fiber optic service providers have a low churn rate, this will aid in increasing the retention rate. The business might also decide to look into the high churn rate for users of digital services. Incentives might be offered by the business to keep those clients. 
+
+The company might use this information to reward clients who provide numerous services by leveraging their contract information. This need to have a direct influence on the customer's decision to stick with the business. Given this statistic, the business should forego the majority of its significant marketing activities for the year. As the ratio is in the company's advantage, this should aid in client retention.
+
+According to the research, there is a higher likelihood that a consumer will stick with a service the more frequently it is used. Despite the fact that a reduced services usage is advantageous to the business, when it goes below a certain point, the churn rate increases. The business may utilize this data to offer clients who use its services more frequently extra incentives.
+
+Customers who were approached by the tech support staff on average more frequently made the decision to depart, whilst customers who were contacted far less frequently made the decision to continue using their services. The findings appear counterintuitive since they show a pattern whereby the likelihood that a client would terminate their account increased with the frequency with which they were contacted by the tech support personnel. This information ought to raise an alert. The business has to look at and improve its sales approach. They need to immediately reduce the number of calls each client makes to tech support. This would increase their rate of client retention.
+
